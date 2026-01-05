@@ -51,15 +51,38 @@ def get_abnormalities(inputs):
     return issues
 
 def plot_probabilities(proba_dict):
-    """Creates a professional bar chart of prediction probabilities."""
-    sorted_probs = dict(sorted(proba_dict.items(), key=lambda item: item[1], reverse=True))
+    """
+    Creates a bar chart with 'No Disease' fixed at the bottom 
+    and other conditions sorted by probability above it.
+    """
+    # 1. Separate 'No Disease' from the rest
+    no_disease_key = 'No Disease (Blood Donor)'
+    no_disease_prob = proba_dict.get(no_disease_key, 0)
+    
+    # Get all other conditions
+    other_conditions = {k: v for k, v in proba_dict.items() if k != no_disease_key}
+    
+    # 2. Sort the other conditions (Ascending order puts the highest bar at the TOP)
+    sorted_others = sorted(other_conditions.items(), key=lambda item: item[1])
+    
+    # 3. Combine: Put No Disease first (which renders at the BOTTOM in Plotly)
+    keys = [no_disease_key] + [k for k, v in sorted_others]
+    vals = [no_disease_prob] + [v for v in sorted_others]
+    
     fig = go.Figure(go.Bar(
-        x=list(sorted_probs.values()),
-        y=list(sorted_probs.keys()),
+        x=vals,
+        y=keys,
         orientation='h',
-        marker_color=['#00cc96' if 'No Disease' in k else '#ff4b4b' for k in sorted_probs.keys()]
+        text=[f"{v*100:.1f}%" for v in vals],  # Show percentage on bar
+        textposition='auto',
+        marker_color=['#00cc96' if 'No Disease' in k else '#ff4b4b' for k in keys]
     ))
-    fig.update_layout(title="AI Confidence Distribution", xaxis_title="Probability", height=300, margin=dict(l=0,r=0,t=30,b=0))
+    fig.update_layout(
+        title="AI Confidence Distribution", 
+        xaxis_title="Probability", 
+        height=300, 
+        margin=dict(l=0,r=0,t=30,b=0)
+    )
     return fig
 
 # 2. Load Resources
@@ -68,17 +91,13 @@ def load_resources():
     model = None
     scaler = None
     try:
-        # Load the Random Forest model
         with open('rf_liver.pkl', 'rb') as f:
             model = pickle.load(f)
-            
-        # Try to load the scaler
         try:
             with open('scaler.pkl', 'rb') as f:
                 scaler = pickle.load(f)
         except FileNotFoundError:
-            st.warning("⚠️ 'scaler.pkl' not found. Ensure you saved it from your notebook!")
-            
+            st.warning("⚠️ 'scaler.pkl' not found.")
         return model, scaler
     except Exception as e:
         return None, str(e)
@@ -87,7 +106,7 @@ def load_resources():
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/3050/3050479.png", width=80)
     st.title("Liver AI Diagnostic")
-    st.info("System Ready. Using Random Forest Architecture.")
+    st.info("System Ready.")
     st.markdown("---")
     st.markdown("**Detectable Conditions:**")
     for v in CLASS_MAP.values():
@@ -132,44 +151,23 @@ with st.form("main_form"):
 if analyze:
     # 1. Prepare Data Dictionary
     raw_input = {
-        'age': age, 
-        'sex': sex, 
-        'albumin': alb, 
-        'alkaline_phosphatase': alp, 
-        'alanine_aminotransferase': alt, 
-        'aspartate_aminotransferase': ast, 
-        'bilirubin': bil, 
-        'cholinesterase': che, 
-        'cholesterol': chol, 
-        'creatinina': crea, 
-        'gamma_glutamyl_transferase': ggt, 
-        'protein': prot
+        'age': age, 'sex': sex, 'albumin': alb, 'alkaline_phosphatase': alp, 
+        'alanine_aminotransferase': alt, 'aspartate_aminotransferase': ast, 
+        'bilirubin': bil, 'cholinesterase': che, 'cholesterol': chol, 
+        'creatinina': crea, 'gamma_glutamyl_transferase': ggt, 'protein': prot
     }
 
     # 2. Create DataFrame for Model
     model_input_data = {
-        'Age': age, 
-        'Sex': sex, 
-        'ALB': alb, 
-        'ALP': alp, 
-        'ALT': alt, 
-        'AST': ast, 
-        'BIL': bil, 
-        'CHE': che, 
-        'CHOL': chol, 
-        'CREA': crea, 
-        'GGT': ggt, 
-        'PROT': prot
+        'Age': age, 'Sex': sex, 'ALB': alb, 'ALP': alp, 'ALT': alt, 'AST': ast, 
+        'BIL': bil, 'CHE': che, 'CHOL': chol, 'CREA': crea, 'GGT': ggt, 'PROT': prot
     }
     
-    # Ensure DataFrame columns are in the correct order
     cols_order = ['Age', 'Sex', 'ALB', 'ALP', 'ALT', 'AST', 'BIL', 'CHE', 'CHOL', 'CREA', 'GGT', 'PROT']
     input_df = pd.DataFrame([model_input_data], columns=cols_order)
 
     # 3. Scale the Input
     if scaler:
-        # --- FIXED CODE HERE ---
-        # We use .values to avoid "Feature Name Mismatch" errors
         final_input = scaler.transform(input_df.values)
     else:
         final_input = input_df 
@@ -211,8 +209,10 @@ if analyze:
                 st.success("• All biomarkers within reference range.")
 
         with t3:
-            st.write("Data sent to model (Processed):")
-            st.write(final_input)
+            st.write("### Data Sent to Model")
+            st.info("Values shown are exactly what you entered (Simpler numbers).")
+            # We display the ORIGINAL input_df so it has column names and clean numbers
+            st.dataframe(input_df)
 
     except Exception as e:
         st.error(f"Error: {e}")
