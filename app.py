@@ -12,7 +12,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# 2. CONSTANTS (Aligned with your Notebook)
+# 2. CONSTANTS (From your Notebook)
 FEATURE_ORDER = ['Age', 'Sex', 'ALB', 'ALP', 'ALT', 'AST', 'BIL', 'CHE', 'CHOL', 'CREA', 'GGT', 'PROT']
 
 # Medical Reference Ranges (Standard µmol/L)
@@ -120,8 +120,9 @@ if submit:
                 is_abnormal = True
                 reasons.append(f"{key} is {'High' if val > high else 'Low'} ({val})")
 
-    # 3. DYNAMIC PREDICTION LOGIC (This replaces the crashing line)
-    class_labels = ["No Disease (Blood Donor)", "Suspect Disease", "Hepatitis C", "Fibrosis", "Cirrhosis"]
+    # 3. THE "BULLETPROOF" PREDICTION LOGIC
+    # These are the labels we know.
+    known_labels = ["No Disease (Blood Donor)", "Suspect Disease", "Hepatitis C", "Fibrosis", "Cirrhosis"]
     
     if not is_abnormal:
         # Default Healthy Case
@@ -135,28 +136,29 @@ if submit:
         }
         confidence = 98.5
     else:
-        # Run Model
+        # RUN MODEL
         df = pd.DataFrame([input_dict], columns=FEATURE_ORDER)
         
-        # Get the numeric prediction index
+        # 1. Get Prediction Index
         pred_idx = int(model.predict(df)[0])
         
-        # Get raw probabilities
+        # 2. Get Raw Probabilities
         probs = model.predict_proba(df)[0]
         
-        # SAFE DYNAMIC MAPPING: No more IndexErrors
+        # 3. DYNAMIC MAPPING: This loop avoids IndexError by checking bounds
         proba_dict = {}
         for i in range(len(probs)):
-            # If we have a name for this index in our list, use it. 
-            # Otherwise, call it 'Unknown Class [index]'.
-            label = class_labels[i] if i < len(class_labels) else f"Unknown Class {i}"
+            if i < len(known_labels):
+                label = known_labels[i]
+            else:
+                label = f"Unknown Stage {i}"
             proba_dict[label] = float(probs[i])
             
-        # Determine the winner text based on the index
-        if pred_idx < len(class_labels):
-            result_text = class_labels[pred_idx]
+        # 4. Get Result Text Safely
+        if pred_idx < len(known_labels):
+            result_text = known_labels[pred_idx]
         else:
-            result_text = f"Unknown Class {pred_idx}"
+            result_text = f"Unknown Stage {pred_idx}"
             
         confidence = proba_dict.get(result_text, 0) * 100
 
