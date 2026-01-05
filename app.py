@@ -152,7 +152,3 @@ if go_btn:
             st.write("#### Clinical Observations:")
             for issue in clinical_issues: 
                 st.warning(f"• {issue}")
-
-
-
-[Image of liver disease stages]
