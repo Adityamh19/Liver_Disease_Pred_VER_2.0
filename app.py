@@ -1,10 +1,10 @@
 import streamlit as st
-import pandas as pd
-import pickle
-import numpy as np
-import plotly.graph_objects as go
+import os
+import sys
 
-# 1. Page Configuration
+# -----------------------------------------------------------------------------
+# 1. PAGE CONFIG (MUST BE FIRST)
+# -----------------------------------------------------------------------------
 st.set_page_config(
     page_title="Liver Diagnostic AI | Professional Edition",
     page_icon="🩺",
@@ -12,14 +12,33 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- HELPER: Medical Reference Ranges (Standardized to µmol/L for Model) ---
+# -----------------------------------------------------------------------------
+# 2. SAFE IMPORT & DIAGNOSTICS SYSTEM
+# -----------------------------------------------------------------------------
+# This block prevents "Blank Screen" crashes due to missing libraries
+try:
+    import pandas as pd
+    import pickle
+    import numpy as np
+    import plotly.graph_objects as go
+except ImportError as e:
+    st.error(f"🚨 CRITICAL SYSTEM ERROR: Missing Dependencies.")
+    st.code(f"Error details: {e}")
+    st.warning("Please check your 'requirements.txt' file in GitHub. It must include: pandas, numpy, scikit-learn, plotly")
+    st.stop()
+
+# -----------------------------------------------------------------------------
+# 3. HELPER FUNCTIONS & CONSTANTS
+# -----------------------------------------------------------------------------
+
+# Medical Reference Ranges (Standardized to µmol/L for Model)
 REF_RANGES = {
     'age': (0.0, 120.0),
     'albumin': (35, 55),
     'alkaline_phosphatase': (40, 150),
     'alanine_aminotransferase': (7, 56),
     'aspartate_aminotransferase': (10, 40),
-    'bilirubin': (5.0, 21.0), # Normal range in µmol/L
+    'bilirubin': (5.0, 21.0), 
     'cholinesterase': (4, 12),
     'cholesterol': (2.5, 7.8),
     'creatinina': (50, 110),
@@ -27,7 +46,6 @@ REF_RANGES = {
     'protein': (60, 80)
 }
 
-# --- CLASS MAPPING ---
 CLASS_MAP = {
     0: 'No Disease (Blood Donor)',
     1: 'Suspect Disease',
@@ -42,7 +60,6 @@ def get_abnormalities(inputs):
     for feature, value in inputs.items():
         if feature == 'sex': continue
         display_name = feature.replace('_', ' ').title()
-        # Safe get with wide default range to avoid errors
         low, high = REF_RANGES.get(feature, (0, 9999))
         
         val = float(value)
@@ -57,7 +74,6 @@ def plot_probabilities(proba_dict):
     clean_dict = {k: float(v) for k, v in proba_dict.items()}
     sorted_probs = dict(sorted(clean_dict.items(), key=lambda item: item[1], reverse=True))
     
-    # Dynamic coloring: Green for healthy, Red for disease
     colors = ['#00cc96' if 'No Disease' in k else '#ff4b4b' for k in sorted_probs.keys()]
     
     fig = go.Figure(go.Bar(
@@ -69,45 +85,49 @@ def plot_probabilities(proba_dict):
     fig.update_layout(title="AI Confidence Distribution", xaxis_title="Probability", height=300, margin=dict(l=0,r=0,t=30,b=0))
     return fig
 
-# 2. Load Resources
+# -----------------------------------------------------------------------------
+# 4. ROBUST FILE LOADING
+# -----------------------------------------------------------------------------
 @st.cache_resource
 def load_resources():
-    model = None
+    # Debug: Print current directory files to logs
+    current_files = os.listdir(os.getcwd())
+    print(f"DEBUG: Current directory files: {current_files}")
+    
+    model_path = 'rf_liver.pkl'
+    
+    # Check if file exists before trying to open
+    if not os.path.exists(model_path):
+        return None, f"File not found: {model_path}. (Available files: {current_files})"
+    
     try:
-        # Ensure 'rf_liver.pkl' is in the same folder
-        with open('rf_liver.pkl', 'rb') as f:
+        with open(model_path, 'rb') as f:
             model = pickle.load(f)
-        return model
+        return model, "Success"
     except Exception as e:
-        return None, str(e)
+        return None, f"Pickle Load Error: {str(e)}"
 
-# --- SIDEBAR ---
+# -----------------------------------------------------------------------------
+# 5. UI & LOGIC
+# -----------------------------------------------------------------------------
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/3050/3050479.png", width=80)
     st.title("Liver AI Diagnostic")
-    
     st.markdown("### ⚙️ Settings")
     unit_mode = st.radio("Bilirubin Units:", ["mg/dL (USA Standard)", "µmol/L (International)"])
-    
     st.info("System Ready.")
-    st.markdown("---")
-    st.markdown("**Detectable Conditions:**")
-    for v in CLASS_MAP.values():
-        st.markdown(f"- {v}")
 
-# --- MAIN PAGE ---
 st.title("🩺 Advanced Liver Disease Prediction")
 st.markdown("### Clinical Interface")
 
-# Load model
-resources = load_resources()
-# Handle loading errors gracefully
-if isinstance(resources, tuple) and resources[0] is None:
-    st.error(f"🚨 System Error: {resources[1]}")
-    st.warning("Please ensure 'rf_liver.pkl' is in the directory.")
-    st.stop()
-else:
-    model = resources
+# Load model with Error Checking
+model, status_msg = load_resources()
+
+if model is None:
+    st.error("🚨 CRITICAL ERROR: Model Failed to Load")
+    st.warning(f"Debug Info: {status_msg}")
+    st.info("💡 FIX: Ensure 'rf_liver.pkl' is uploaded to the MAIN folder of your GitHub repository.")
+    st.stop() # Stops execution here so the app doesn't crash later
 
 # INPUT FORM
 with st.form("main_form"):
@@ -129,12 +149,9 @@ with st.form("main_form"):
         
         # *** SMART BILIRUBIN INPUT ***
         if "mg/dL" in unit_mode:
-            # User enters US units (Default 0.8)
             bil_input = st.number_input("BIL (Bilirubin) [mg/dL]", value=0.8, step=0.1)
-            # We convert it to µmol/L for the model (x 17.1)
             bil_final = bil_input * 17.1
         else:
-            # User enters International units (Default 14.0)
             bil_input = st.number_input("BIL (Bilirubin) [µmol/L]", value=14.0, step=1.0)
             bil_final = bil_input
 
@@ -145,14 +162,13 @@ with st.form("main_form"):
     analyze = st.form_submit_button("🔍 Run Advanced Analysis", use_container_width=True)
 
 if analyze:
-    # 1. Prepare Data Dictionary (Using the FINAL converted values)
+    # Prepare Data Dictionary
     model_input_data = {
         'Age': age, 'Sex': sex, 'ALB': alb, 'ALP': alp, 'ALT': alt, 'AST': ast,
-        'BIL': bil_final, # This is now guaranteed to be in µmol/L
+        'BIL': bil_final, 
         'CHE': che, 'CHOL': chol, 'CREA': crea, 'GGT': ggt, 'PROT': prot
     }
     
-    # Helper dict for mapping names to values for the 'Abnormalities' function
     raw_input_for_display = {
         'age': age, 'sex': sex, 'albumin': alb, 'alkaline_phosphatase': alp,
         'alanine_aminotransferase': alt, 'aspartate_aminotransferase': ast,
@@ -161,19 +177,15 @@ if analyze:
         'creatinina': crea, 'gamma_glutamyl_transferase': ggt, 'protein': prot
     }
 
-    # 2. CHECK CLINICAL GUARDRAILS FIRST
-    # Before asking the AI, we check if the patient is medically normal.
+    # === CLINICAL GUARDRAIL LOGIC ===
     abnormalities = get_abnormalities(raw_input_for_display)
     is_healthy = len(abnormalities) == 0
 
-    # 3. Decision Logic
     try:
         if is_healthy:
-            # === BYPASS AI: Force Healthy Result ===
-            pred_idx = 0 # Corresponds to 'No Disease' in CLASS_MAP
+            # FORCE HEALTHY RESULT
+            pred_idx = 0 
             result_text = "No Disease (Blood Donor)"
-            
-            # Manually construct high confidence for healthy, low for others
             proba_dict = {
                 'No Disease (Blood Donor)': 0.985,
                 'Suspect Disease': 0.010,
@@ -181,21 +193,13 @@ if analyze:
                 'Fibrosis': 0.001,
                 'Cirrhosis': 0.002
             }
-            
-            # (Optional) Log to console for debugging
-            print("Guardrail Active: Forced 'No Disease'")
-            
         else:
-            # === RUN AI: Abnormalities Detected ===
-            
-            # Prepare DataFrame
+            # RUN AI MODEL
             cols_order = ['Age', 'Sex', 'ALB', 'ALP', 'ALT', 'AST', 'BIL', 'CHE', 'CHOL', 'CREA', 'GGT', 'PROT']
             input_df = pd.DataFrame([model_input_data], columns=cols_order)
-
-            # Prediction
-            final_input = input_df 
-            raw_pred = model.predict(final_input)
             
+            # Predict
+            raw_pred = model.predict(input_df)
             if hasattr(raw_pred, 'item'):
                 pred_idx = int(raw_pred.item())
             else:
@@ -204,11 +208,11 @@ if analyze:
             result_text = CLASS_MAP.get(pred_idx, "Unknown Condition")
             
             # Probabilities
-            raw_probs = model.predict_proba(final_input)
+            raw_probs = model.predict_proba(input_df)
             probs = raw_probs.flatten()
             proba_dict = {CLASS_MAP[i]: float(p) for i, p in enumerate(probs)}
         
-        # --- RESULTS DISPLAY (Common for both paths) ---
+        # DISPLAY RESULTS
         st.divider()
         col_res, col_conf = st.columns([3, 1])
         with col_res:
@@ -220,7 +224,6 @@ if analyze:
             conf_val = float(proba_dict.get(result_text, 0))
             st.metric("Confidence", f"{conf_val*100:.1f}%")
 
-        # --- TABS SECTION ---
         t1, t2, t3 = st.tabs(["📊 Confidence Analysis", "🧬 Clinical Factors", "⚙️ Debug Info"])
         
         with t1:
@@ -236,9 +239,7 @@ if analyze:
 
         with t3:
             st.write("### Data Sent to Analysis")
-            st.info(f"Bilirubin Mode: {unit_mode}")
-            st.info(f"User Input: {bil_input} | Model Received: {bil_final:.2f} µmol/L")
             st.write(model_input_data)
 
     except Exception as e:
-        st.error(f"Error during analysis: {e}")
+        st.error(f"Analysis Error: {e}")
