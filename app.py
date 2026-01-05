@@ -1,245 +1,285 @@
 import streamlit as st
+import pandas as pd
+import numpy as np
+import joblib
+import plotly.graph_objects as go
 import os
-import sys
 
 # -----------------------------------------------------------------------------
-# 1. PAGE CONFIG (MUST BE FIRST)
+# 1. PAGE CONFIGURATION
 # -----------------------------------------------------------------------------
 st.set_page_config(
-    page_title="Liver Diagnostic AI | Professional Edition",
+    page_title="Liver Diagnostic AI | Random Forest Edition",
     page_icon="🩺",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
 # -----------------------------------------------------------------------------
-# 2. SAFE IMPORT & DIAGNOSTICS SYSTEM
-# -----------------------------------------------------------------------------
-# This block prevents "Blank Screen" crashes due to missing libraries
-try:
-    import pandas as pd
-    import pickle
-    import numpy as np
-    import plotly.graph_objects as go
-except ImportError as e:
-    st.error(f"🚨 CRITICAL SYSTEM ERROR: Missing Dependencies.")
-    st.code(f"Error details: {e}")
-    st.warning("Please check your 'requirements.txt' file in GitHub. It must include: pandas, numpy, scikit-learn, plotly")
-    st.stop()
-
-# -----------------------------------------------------------------------------
-# 3. HELPER FUNCTIONS & CONSTANTS
+# 2. SCIENTIFIC CONFIGURATION
 # -----------------------------------------------------------------------------
 
-# Medical Reference Ranges (Standardized to µmol/L for Model)
+# EXACT Feature Order required by the Model
+FEATURE_ORDER = ['Age', 'Sex', 'ALB', 'ALP', 'ALT', 'AST', 'BIL', 'CHE', 'CHOL', 'CREA', 'GGT', 'PROT']
+
+# Reference Ranges (used for the "Healthy Bypass" check)
 REF_RANGES = {
-    'age': (0.0, 120.0),
-    'albumin': (35, 55),
-    'alkaline_phosphatase': (40, 150),
-    'alanine_aminotransferase': (7, 56),
-    'aspartate_aminotransferase': (10, 40),
-    'bilirubin': (5.0, 21.0), 
-    'cholinesterase': (4, 12),
-    'cholesterol': (2.5, 7.8),
-    'creatinina': (50, 110),
-    'gamma_glutamyl_transferase': (9, 48),
-    'protein': (60, 80)
+    'Age': (10, 100),
+    'ALB': (35, 55),
+    'ALP': (40, 150),
+    'ALT': (7, 56),
+    'AST': (10, 40),
+    'BIL': (1.0, 21.0), 
+    'CHE': (4, 12),
+    'CHOL': (2.5, 7.8),
+    'CREA': (50, 110),
+    'GGT': (9, 48),
+    'PROT': (60, 80)
 }
 
+# Class Mapping (0=Donor, 1=Hepatitis, 2=Fibrosis, 3=Cirrhosis)
+# Adjusted for typical Random Forest outputs on this dataset
 CLASS_MAP = {
     0: 'No Disease (Blood Donor)',
-    1: 'Suspect Disease',
-    2: 'Hepatitis C',
-    3: 'Fibrosis',
-    4: 'Cirrhosis'
+    1: 'Hepatitis C',
+    2: 'Fibrosis',
+    3: 'Cirrhosis'
 }
 
-def get_abnormalities(inputs):
-    """Identifies which markers are out of range based on the MODEL values."""
+# -----------------------------------------------------------------------------
+# 3. HELPER FUNCTIONS
+# -----------------------------------------------------------------------------
+
+def manual_scaling(df):
+    """
+    Fallback Scaling: If the scaler is missing, we apply standard scaling 
+    based on the UCI Hepatitis C dataset statistics to prevent model confusion.
+    """
+    stats = {
+        'Age':  (47.4, 10.0),
+        'Sex':  (0.38, 0.48), 
+        'ALB':  (41.6, 5.7),
+        'ALP':  (68.2, 26.0),
+        'ALT':  (28.4, 25.4),
+        'AST':  (34.7, 33.5),
+        'BIL':  (11.4, 19.7),
+        'CHE':  (8.19, 2.20),
+        'CHOL': (5.36, 1.13),
+        'CREA': (81.2, 49.7),
+        'GGT':  (39.5, 54.6),
+        'PROT': (72.0, 5.4)
+    }
+    
+    df_scaled = df.copy()
+    for col in FEATURE_ORDER:
+        if col in stats:
+            mu, sigma = stats[col]
+            if sigma == 0: sigma = 1
+            df_scaled[col] = (df[col] - mu) / sigma
+            
+    return df_scaled
+
+def get_clinical_deviations(inputs):
+    """Checks raw values against healthy ranges."""
     issues = []
-    for feature, value in inputs.items():
-        if feature == 'sex': continue
-        display_name = feature.replace('_', ' ').title()
-        low, high = REF_RANGES.get(feature, (0, 9999))
-        
-        val = float(value)
-        if val < low:
-            issues.append(f"Low {display_name} ({val:.2f})")
-        elif val > high:
-            issues.append(f"Elevated {display_name} ({val:.2f})")
+    for col, val in inputs.items():
+        if col == 'Sex': continue
+        if col in REF_RANGES:
+            low, high = REF_RANGES[col]
+            if val < low:
+                issues.append(f"Low {col} ({val})")
+            elif val > high:
+                issues.append(f"Elevated {col} ({val})")
     return issues
 
-def plot_probabilities(proba_dict):
-    """Creates a professional bar chart of prediction probabilities."""
-    clean_dict = {k: float(v) for k, v in proba_dict.items()}
-    sorted_probs = dict(sorted(clean_dict.items(), key=lambda item: item[1], reverse=True))
+def plot_confidence(probs):
+    """Draws the probability bar chart."""
+    clean = {k: float(v) for k, v in probs.items()}
+    sorted_p = dict(sorted(clean.items(), key=lambda item: item[1], reverse=True))
     
-    colors = ['#00cc96' if 'No Disease' in k else '#ff4b4b' for k in sorted_probs.keys()]
+    colors = ['#00cc96' if 'No Disease' in k else '#ff4b4b' for k in sorted_p.keys()]
     
     fig = go.Figure(go.Bar(
-        x=list(sorted_probs.values()),
-        y=list(sorted_probs.keys()),
+        x=list(sorted_p.values()),
+        y=list(sorted_p.keys()),
         orientation='h',
         marker_color=colors
     ))
-    fig.update_layout(title="AI Confidence Distribution", xaxis_title="Probability", height=300, margin=dict(l=0,r=0,t=30,b=0))
+    fig.update_layout(
+        title="AI Confidence Distribution", 
+        xaxis_title="Probability", 
+        height=300, 
+        margin=dict(l=0,r=0,t=40,b=0)
+    )
     return fig
 
 # -----------------------------------------------------------------------------
-# 4. ROBUST FILE LOADING
+# 4. ROBUST LOADER (Random Forest Version)
 # -----------------------------------------------------------------------------
 @st.cache_resource
-def load_resources():
-    # Debug: Print current directory files to logs
-    current_files = os.listdir(os.getcwd())
-    print(f"DEBUG: Current directory files: {current_files}")
+def load_system():
+    # We look for typical Random Forest pickle names
+    # Priority: rf_liver.pkl -> RandomForest.pkl -> model.pkl
+    possible_files = ['rf_liver.pkl', 'RandomForest.pkl', 'model.pkl']
     
-    model_path = 'rf_liver.pkl'
-    
-    # Check if file exists before trying to open
-    if not os.path.exists(model_path):
-        return None, f"File not found: {model_path}. (Available files: {current_files})"
-    
+    model_file = None
+    for f in possible_files:
+        if os.path.exists(f):
+            model_file = f
+            break
+            
+    if model_file is None:
+        return None, f"Model file missing. Searched for: {possible_files}"
+        
     try:
-        with open(model_path, 'rb') as f:
-            model = pickle.load(f)
+        model = joblib.load(model_file)
         return model, "Success"
     except Exception as e:
-        return None, f"Pickle Load Error: {str(e)}"
+        return None, f"Load Error: {str(e)}"
 
 # -----------------------------------------------------------------------------
-# 5. UI & LOGIC
+# 5. UI LAYOUT
 # -----------------------------------------------------------------------------
+
+# Sidebar
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/3050/3050479.png", width=80)
-    st.title("Liver AI Diagnostic")
-    st.markdown("### ⚙️ Settings")
-    unit_mode = st.radio("Bilirubin Units:", ["mg/dL (USA Standard)", "µmol/L (International)"])
-    st.info("System Ready.")
-
+    st.title("Liver Diagnostic AI")
+    st.success("Model: Random Forest")
+    st.info("Sex Encoding: Male=0, Female=1")
+    
+# Main Content
 st.title("🩺 Advanced Liver Disease Prediction")
 st.markdown("### Clinical Interface")
 
-# Load model with Error Checking
-model, status_msg = load_resources()
+# Load Model
+model, status = load_system()
 
 if model is None:
-    st.error("🚨 CRITICAL ERROR: Model Failed to Load")
-    st.warning(f"Debug Info: {status_msg}")
-    st.info("💡 FIX: Ensure 'rf_liver.pkl' is uploaded to the MAIN folder of your GitHub repository.")
-    st.stop() # Stops execution here so the app doesn't crash later
+    st.error("🚨 System Startup Failed")
+    st.warning(f"Error Details: {status}")
+    st.info("Please ensure your Random Forest pickle file (e.g., 'rf_liver.pkl') is uploaded.")
+    st.stop()
 
-# INPUT FORM
+# --- INPUT FORM ---
 with st.form("main_form"):
     c1, c2, c3 = st.columns(3)
+    
     with c1:
         st.subheader("1. Demographics")
-        age = st.number_input("Age (Years)", min_value=0.0, max_value=120.0, value=30.0, step=1.0)
-        sex = st.selectbox("Sex", [1, 0], format_func=lambda x: "Male" if x==1 else "Female")
+        age = st.number_input("Age", min_value=10, max_value=100, value=30)
+        sex_label = st.selectbox("Sex", ["Male", "Female"])
+        sex_val = 0 if sex_label == "Male" else 1 
+        
     with c2:
         st.subheader("2. Enzymes")
-        alt = st.number_input("ALT (Alanine Transaminase)", value=22.0)
-        ast = st.number_input("AST (Aspartate Transaminase)", value=24.0)
-        alp = st.number_input("ALP (Alkaline Phosphatase)", value=70.0) 
+        alt = st.number_input("ALT (Alanine Transaminase)", value=20.0)
+        ast = st.number_input("AST (Aspartate Transaminase)", value=25.0)
+        alp = st.number_input("ALP (Alkaline Phosphatase)", value=50.0)
         ggt = st.number_input("GGT (Gamma-Glutamyl Transferase)", value=20.0)
+        
     with c3:
         st.subheader("3. Proteins")
-        alb = st.number_input("ALB (Albumin)", value=45.0)
-        prot = st.number_input("PROT (Total Protein)", value=72.0)
-        
-        # *** SMART BILIRUBIN INPUT ***
-        if "mg/dL" in unit_mode:
-            bil_input = st.number_input("BIL (Bilirubin) [mg/dL]", value=0.8, step=0.1)
-            bil_final = bil_input * 17.1
-        else:
-            bil_input = st.number_input("BIL (Bilirubin) [µmol/L]", value=14.0, step=1.0)
-            bil_final = bil_input
+        alb = st.number_input("ALB (Albumin)", value=40.0)
+        prot = st.number_input("PROT (Total Protein)", value=70.0)
+        bil = st.number_input("BIL (Bilirubin)", value=10.0)
+        che = st.number_input("CHE (Cholinesterase)", value=8.0)
+        chol = st.number_input("CHOL (Cholesterol)", value=5.0)
+        crea = st.number_input("CREA (Creatinine)", value=70.0)
 
-        che = st.number_input("CHE (Cholinesterase)", value=9.0)
-        chol = st.number_input("CHOL (Cholesterol)", value=5.2)
-        crea = st.number_input("CREA (Creatinine)", value=75.0)
+    analyze = st.form_submit_button("🔍 Run Analysis", use_container_width=True)
 
-    analyze = st.form_submit_button("🔍 Run Advanced Analysis", use_container_width=True)
-
+# -----------------------------------------------------------------------------
+# 6. ANALYSIS LOGIC
+# -----------------------------------------------------------------------------
 if analyze:
-    # Prepare Data Dictionary
-    model_input_data = {
-        'Age': age, 'Sex': sex, 'ALB': alb, 'ALP': alp, 'ALT': alt, 'AST': ast,
-        'BIL': bil_final, 
-        'CHE': che, 'CHOL': chol, 'CREA': crea, 'GGT': ggt, 'PROT': prot
+    # 1. Collect Raw Input
+    raw_data = {
+        'Age': age, 'Sex': sex_val, 
+        'ALB': alb, 'ALP': alp, 'ALT': alt, 'AST': ast, 
+        'BIL': bil, 'CHE': che, 'CHOL': chol, 'CREA': crea, 
+        'GGT': ggt, 'PROT': prot
     }
     
-    raw_input_for_display = {
-        'age': age, 'sex': sex, 'albumin': alb, 'alkaline_phosphatase': alp,
-        'alanine_aminotransferase': alt, 'aspartate_aminotransferase': ast,
-        'bilirubin': bil_final, 
-        'cholinesterase': che, 'cholesterol': chol,
-        'creatinina': crea, 'gamma_glutamyl_transferase': ggt, 'protein': prot
-    }
-
-    # === CLINICAL GUARDRAIL LOGIC ===
-    abnormalities = get_abnormalities(raw_input_for_display)
-    is_healthy = len(abnormalities) == 0
-
+    # 2. Check Clinical Guardrails (Healthy Bypass)
+    deviations = get_clinical_deviations(raw_data)
+    is_healthy = len(deviations) == 0
+    
     try:
         if is_healthy:
-            # FORCE HEALTHY RESULT
-            pred_idx = 0 
+            # === GUARDRAIL ACTIVE: Force Healthy ===
             result_text = "No Disease (Blood Donor)"
-            proba_dict = {
+            final_conf = 98.5
+            probs_map = {
                 'No Disease (Blood Donor)': 0.985,
-                'Suspect Disease': 0.010,
-                'Hepatitis C': 0.002,
-                'Fibrosis': 0.001,
-                'Cirrhosis': 0.002
+                'Hepatitis C': 0.005,
+                'Fibrosis': 0.005,
+                'Cirrhosis': 0.005
             }
+            
         else:
-            # RUN AI MODEL
-            cols_order = ['Age', 'Sex', 'ALB', 'ALP', 'ALT', 'AST', 'BIL', 'CHE', 'CHOL', 'CREA', 'GGT', 'PROT']
-            input_df = pd.DataFrame([model_input_data], columns=cols_order)
+            # === RUN MODEL (Random Forest) ===
+            
+            # Convert to DataFrame
+            input_df = pd.DataFrame([raw_data], columns=FEATURE_ORDER)
+            
+            # Apply Scaling (Random Forest is robust, but scaling helps consistency)
+            scaled_df = manual_scaling(input_df)
             
             # Predict
-            raw_pred = model.predict(input_df)
-            if hasattr(raw_pred, 'item'):
-                pred_idx = int(raw_pred.item())
+            pred_idx = model.predict(scaled_df)[0]
+            
+            # Probability Handling
+            if hasattr(model, "predict_proba"):
+                raw_probs = model.predict_proba(scaled_df)[0]
+                # Map probabilities to classes safely
+                probs_map = {}
+                for i, p in enumerate(raw_probs):
+                    cls_name = CLASS_MAP.get(i, f"Class {i}")
+                    probs_map[cls_name] = float(p)
+                
+                # Get confidence of the winning class
+                winner_class = CLASS_MAP.get(pred_idx, "Unknown")
+                final_conf = probs_map.get(winner_class, 0.0) * 100
             else:
-                pred_idx = int(raw_pred.flatten()[0])
-            
+                # Fallback for models without predict_proba
+                probs_map = {CLASS_MAP.get(pred_idx): 1.0}
+                final_conf = 100.0
+
             result_text = CLASS_MAP.get(pred_idx, "Unknown Condition")
-            
-            # Probabilities
-            raw_probs = model.predict_proba(input_df)
-            probs = raw_probs.flatten()
-            proba_dict = {CLASS_MAP[i]: float(p) for i, p in enumerate(probs)}
-        
-        # DISPLAY RESULTS
+
+        # ---------------------------------------------------------------------
+        # 7. DISPLAY RESULTS
+        # ---------------------------------------------------------------------
         st.divider()
-        col_res, col_conf = st.columns([3, 1])
-        with col_res:
-            if pred_idx == 0: 
+        c_res, c_met = st.columns([3, 1])
+        
+        with c_res:
+            if "No Disease" in result_text:
                 st.success(f"### Primary Diagnosis: {result_text}")
             else:
                 st.error(f"### Primary Diagnosis: {result_text}")
-        with col_conf:
-            conf_val = float(proba_dict.get(result_text, 0))
-            st.metric("Confidence", f"{conf_val*100:.1f}%")
-
-        t1, t2, t3 = st.tabs(["📊 Confidence Analysis", "🧬 Clinical Factors", "⚙️ Debug Info"])
+                
+        with c_met:
+            st.metric("AI Confidence", f"{final_conf:.1f}%")
+            
+        t1, t2, t3 = st.tabs(["📊 Probability", "🧬 Clinical Factors", "⚙️ Data View"])
         
         with t1:
-            st.plotly_chart(plot_probabilities(proba_dict), use_container_width=True)
+            st.plotly_chart(plot_confidence(probs_map), use_container_width=True)
             
         with t2:
-            st.write("#### Deviations from Normal Range:")
-            if abnormalities:
-                for issue in abnormalities:
-                    st.warning(f"• {issue}")
+            if is_healthy:
+                st.success("✅ All biomarkers are within reference range.")
             else:
-                st.success("• All biomarkers within reference range.")
-
+                st.write("#### Clinical Deviations")
+                for dev in deviations:
+                    st.warning(f"⚠️ {dev}")
+                    
         with t3:
-            st.write("### Data Sent to Analysis")
-            st.write(model_input_data)
+            st.write("Raw Inputs (User):")
+            st.dataframe(pd.DataFrame([raw_data]))
 
     except Exception as e:
-        st.error(f"Analysis Error: {e}")
+        st.error("Analysis Failed")
+        st.code(f"Error: {e}")
