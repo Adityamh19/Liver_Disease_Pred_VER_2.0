@@ -52,28 +52,37 @@ def get_abnormalities(inputs):
 
 def plot_probabilities(proba_dict):
     """
-    Creates a bar chart with 'No Disease' fixed at the bottom 
-    and other conditions sorted by probability above it.
+    Creates a bar chart with 'No Disease' fixed at the bottom.
+    Includes safety checks to prevent formatting errors.
     """
     # 1. Separate 'No Disease' from the rest
     no_disease_key = 'No Disease (Blood Donor)'
-    no_disease_prob = proba_dict.get(no_disease_key, 0)
+    # Safety: Ensure we treat the value as a float, default to 0.0
+    val = proba_dict.get(no_disease_key, 0.0)
+    no_disease_prob = float(val) if not isinstance(val, (tuple, list)) else float(val[0])
     
     # Get all other conditions
-    other_conditions = {k: v for k, v in proba_dict.items() if k != no_disease_key}
+    other_conditions = {}
+    for k, v in proba_dict.items():
+        if k != no_disease_key:
+            # Safety conversion for values
+            other_conditions[k] = float(v) if not isinstance(v, (tuple, list)) else float(v[0])
     
     # 2. Sort the other conditions (Ascending order puts the highest bar at the TOP)
     sorted_others = sorted(other_conditions.items(), key=lambda item: item[1])
     
-    # 3. Combine: Put No Disease first (which renders at the BOTTOM in Plotly)
+    # 3. Combine: Put No Disease first (which renders at the BOTTOM in Plotly horizontal bar)
     keys = [no_disease_key] + [k for k, v in sorted_others]
     vals = [no_disease_prob] + [v for v in sorted_others]
     
+    # Create text labels safely
+    text_labels = [f"{v*100:.1f}%" for v in vals]
+
     fig = go.Figure(go.Bar(
         x=vals,
         y=keys,
         orientation='h',
-        text=[f"{v*100:.1f}%" for v in vals],  # Show percentage on bar
+        text=text_labels, 
         textposition='auto',
         marker_color=['#00cc96' if 'No Disease' in k else '#ff4b4b' for k in keys]
     ))
@@ -190,7 +199,9 @@ if analyze:
             else:
                 st.error(f"### Primary Diagnosis: {result_text}")
         with col_conf:
-            conf_val = proba_dict.get(result_text, 0)
+            # Safety: Ensure conf_val is a float
+            raw_conf = proba_dict.get(result_text, 0)
+            conf_val = float(raw_conf) if not isinstance(raw_conf, (tuple, list)) else float(raw_conf[0])
             st.metric("Confidence", f"{conf_val*100:.1f}%")
 
         # TABS
@@ -210,8 +221,8 @@ if analyze:
 
         with t3:
             st.write("### Data Sent to Model")
-            st.info("Values shown are exactly what you entered (Simpler numbers).")
-            # We display the ORIGINAL input_df so it has column names and clean numbers
+            st.info("Values shown are exactly what you entered (with column names).")
+            # This displays the dataframe with column names and simple numbers (e.g. 45.0)
             st.dataframe(input_df)
 
     except Exception as e:
