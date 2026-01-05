@@ -69,16 +69,11 @@ def plot_probabilities(proba_dict):
 @st.cache_resource
 def load_resources():
     model = None
-    scaler = None
+    # We are skipping the scaler intentionally now
     try:
         with open('rf_liver.pkl', 'rb') as f:
             model = pickle.load(f)
-        try:
-            with open('scaler.pkl', 'rb') as f:
-                scaler = pickle.load(f)
-        except FileNotFoundError:
-            st.warning("⚠️ 'scaler.pkl' not found.")
-        return model, scaler
+        return model
     except Exception as e:
         return None, str(e)
 
@@ -98,37 +93,31 @@ st.markdown("### Clinical Interface")
 
 # Load model
 resources = load_resources()
-if resources[0] is None:
+# Error handling in case model load fails
+if isinstance(resources, tuple) and resources[0] is None:
     st.error(f"🚨 System Error: {resources[1]}")
     st.stop()
-
-model, scaler = resources
+else:
+    model = resources
 
 # INPUT FORM
 with st.form("main_form"):
     c1, c2, c3 = st.columns(3)
     with c1:
         st.subheader("1. Demographics")
-        # CHANGED: Default Age 45 -> 32 (Younger is usually healthier)
         age = st.number_input("Age (Years)", min_value=0.0, max_value=120.0, value=32.0, step=1.0)
         sex = st.selectbox("Sex", [1, 0], format_func=lambda x: "Male" if x==1 else "Female")
     with c2:
         st.subheader("2. Enzymes")
-        # CHANGED: Values optimized for "Healthy" range
         alt = st.number_input("ALT (Alanine Transaminase)", value=22.0)
         ast = st.number_input("AST (Aspartate Transaminase)", value=24.0)
         alp = st.number_input("ALP (Alkaline Phosphatase)", value=70.0) 
         ggt = st.number_input("GGT (Gamma-Glutamyl Transferase)", value=20.0)
     with c3:
         st.subheader("3. Proteins")
-        # CHANGED: Albumin 38 -> 45 (Higher albumin indicates better liver function)
         alb = st.number_input("ALB (Albumin)", value=45.0)
         prot = st.number_input("PROT (Total Protein)", value=72.0)
-        
-        # *** CRITICAL FIX ***
-        # CHANGED: Bilirubin 5.0 -> 0.8 (5.0 is Jaundice/Toxic, 0.8 is healthy)
         bil = st.number_input("BIL (Bilirubin)", value=0.8) 
-        
         che = st.number_input("CHE (Cholinesterase)", value=9.0)
         chol = st.number_input("CHOL (Cholesterol)", value=5.2)
         crea = st.number_input("CREA (Creatinine)", value=75.0)
@@ -153,11 +142,9 @@ if analyze:
     cols_order = ['Age', 'Sex', 'ALB', 'ALP', 'ALT', 'AST', 'BIL', 'CHE', 'CHOL', 'CREA', 'GGT', 'PROT']
     input_df = pd.DataFrame([model_input_data], columns=cols_order)
 
-    # 3. Scale the Input
-    if scaler:
-        final_input = scaler.transform(input_df.values)
-    else:
-        final_input = input_df 
+    # 3. DIRECT INPUT (Bypassing Scaler)
+    # Random Forest usually handles raw data better if the scaler is mismatched
+    final_input = input_df 
 
     try:
         # Prediction (Safety flattened)
