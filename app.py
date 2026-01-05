@@ -13,7 +13,6 @@ st.set_page_config(
 )
 
 # --- HELPER: Medical Reference Ranges ---
-# (Used for the Clinical Factors tab)
 REF_RANGES = {
     'age': (0.0, 120.0),
     'albumin': (35, 55),
@@ -110,22 +109,29 @@ with st.form("main_form"):
     c1, c2, c3 = st.columns(3)
     with c1:
         st.subheader("1. Demographics")
-        age = st.number_input("Age (Years)", min_value=0.0, max_value=120.0, value=45.0, step=1.0)
+        # CHANGED: Default Age 45 -> 32 (Younger is usually healthier)
+        age = st.number_input("Age (Years)", min_value=0.0, max_value=120.0, value=32.0, step=1.0)
         sex = st.selectbox("Sex", [1, 0], format_func=lambda x: "Male" if x==1 else "Female")
     with c2:
         st.subheader("2. Enzymes")
-        alt = st.number_input("ALT (Alanine Transaminase)", value=20.0)
-        ast = st.number_input("AST (Aspartate Transaminase)", value=25.0)
-        alp = st.number_input("ALP (Alkaline Phosphatase)", value=50.0)
+        # CHANGED: Values optimized for "Healthy" range
+        alt = st.number_input("ALT (Alanine Transaminase)", value=22.0)
+        ast = st.number_input("AST (Aspartate Transaminase)", value=24.0)
+        alp = st.number_input("ALP (Alkaline Phosphatase)", value=70.0) 
         ggt = st.number_input("GGT (Gamma-Glutamyl Transferase)", value=20.0)
     with c3:
         st.subheader("3. Proteins")
-        alb = st.number_input("ALB (Albumin)", value=38.0)
-        prot = st.number_input("PROT (Total Protein)", value=70.0)
-        bil = st.number_input("BIL (Bilirubin)", value=5.0)
+        # CHANGED: Albumin 38 -> 45 (Higher albumin indicates better liver function)
+        alb = st.number_input("ALB (Albumin)", value=45.0)
+        prot = st.number_input("PROT (Total Protein)", value=72.0)
+        
+        # *** CRITICAL FIX ***
+        # CHANGED: Bilirubin 5.0 -> 0.8 (5.0 is Jaundice/Toxic, 0.8 is healthy)
+        bil = st.number_input("BIL (Bilirubin)", value=0.8) 
+        
         che = st.number_input("CHE (Cholinesterase)", value=9.0)
-        chol = st.number_input("CHOL (Cholesterol)", value=4.5)
-        crea = st.number_input("CREA (Creatinine)", value=70.0)
+        chol = st.number_input("CHOL (Cholesterol)", value=5.2)
+        crea = st.number_input("CREA (Creatinine)", value=75.0)
 
     analyze = st.form_submit_button("🔍 Run Advanced Analysis", use_container_width=True)
 
@@ -180,7 +186,7 @@ if analyze:
             conf_val = float(proba_dict.get(result_text, 0))
             st.metric("Confidence", f"{conf_val*100:.1f}%")
 
-        # --- TABS SECTION (Restored per your request) ---
+        # --- TABS SECTION ---
         t1, t2, t3 = st.tabs(["📊 Confidence Analysis", "🧬 Clinical Factors", "⚙️ Debug Info"])
         
         with t1:
@@ -191,7 +197,6 @@ if analyze:
             abnormalities = get_abnormalities(raw_input)
             if abnormalities:
                 for issue in abnormalities:
-                    # This creates the yellow boxes from your image
                     st.warning(f"• {issue}")
             else:
                 st.success("• All biomarkers within reference range.")
