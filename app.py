@@ -6,25 +6,25 @@ import plotly.graph_objects as go
 
 # 1. Page Configuration
 st.set_page_config(
-    page_title="Liver Diagnostic AI | Professional Edition", 
-    page_icon="🩺", 
-    layout="wide", 
+    page_title="Liver Diagnostic AI | Professional Edition",
+    page_icon="🩺",
+    layout="wide",
     initial_sidebar_state="expanded"
 )
 
 # --- HELPER: Medical Reference Ranges ---
 REF_RANGES = {
     'age': (0.0, 120.0),
-    'albumin': (35, 55),        
-    'alkaline_phosphatase': (40, 150),      
-    'alanine_aminotransferase': (7, 56),        
-    'aspartate_aminotransferase': (10, 40),        
-    'bilirubin': (1.7, 20.5),    
-    'cholinesterase': (4, 12),        
-    'cholesterol': (2.5, 7.8),    
-    'creatinina': (50, 110),      
-    'gamma_glutamyl_transferase': (9, 48),        
-    'protein': (60, 80)        
+    'albumin': (35, 55),
+    'alkaline_phosphatase': (40, 150),
+    'alanine_aminotransferase': (7, 56),
+    'aspartate_aminotransferase': (10, 40),
+    'bilirubin': (1.7, 20.5),
+    'cholinesterase': (4, 12),
+    'cholesterol': (2.5, 7.8),
+    'creatinina': (50, 110),
+    'gamma_glutamyl_transferase': (9, 48),
+    'protein': (60, 80)
 }
 
 # --- CLASS MAPPING ---
@@ -44,7 +44,6 @@ def get_abnormalities(inputs):
         display_name = feature.replace('_', ' ').title()
         low, high = REF_RANGES.get(feature, (0, 9999))
         
-        # Ensure comparison is done on simple floats
         val = float(value)
         if val < low:
             issues.append(f"Low {display_name} ({val})")
@@ -54,7 +53,7 @@ def get_abnormalities(inputs):
 
 def plot_probabilities(proba_dict):
     """Creates a professional bar chart of prediction probabilities."""
-    # Convert values to pure floats to avoid tuple errors in plotting
+    # Ensure values are floats to prevent errors
     clean_dict = {k: float(v) for k, v in proba_dict.items()}
     sorted_probs = dict(sorted(clean_dict.items(), key=lambda item: item[1], reverse=True))
     
@@ -73,17 +72,13 @@ def load_resources():
     model = None
     scaler = None
     try:
-        # Load the Random Forest model
         with open('rf_liver.pkl', 'rb') as f:
             model = pickle.load(f)
-            
-        # Try to load the scaler
         try:
             with open('scaler.pkl', 'rb') as f:
                 scaler = pickle.load(f)
         except FileNotFoundError:
-            st.warning("⚠️ 'scaler.pkl' not found. Ensure you saved it from your notebook!")
-            
+            st.warning("⚠️ 'scaler.pkl' not found.")
         return model, scaler
     except Exception as e:
         return None, str(e)
@@ -92,7 +87,7 @@ def load_resources():
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/3050/3050479.png", width=80)
     st.title("Liver AI Diagnostic")
-    st.info("System Ready. Using Random Forest Architecture.")
+    st.info("System Ready.")
     st.markdown("---")
     st.markdown("**Detectable Conditions:**")
     for v in CLASS_MAP.values():
@@ -137,57 +132,36 @@ with st.form("main_form"):
 if analyze:
     # 1. Prepare Data Dictionary
     raw_input = {
-        'age': age, 
-        'sex': sex, 
-        'albumin': alb, 
-        'alkaline_phosphatase': alp, 
-        'alanine_aminotransferase': alt, 
-        'aspartate_aminotransferase': ast, 
-        'bilirubin': bil, 
-        'cholinesterase': che, 
-        'cholesterol': chol, 
-        'creatinina': crea, 
-        'gamma_glutamyl_transferase': ggt, 
-        'protein': prot
+        'age': age, 'sex': sex, 'albumin': alb, 'alkaline_phosphatase': alp,
+        'alanine_aminotransferase': alt, 'aspartate_aminotransferase': ast,
+        'bilirubin': bil, 'cholinesterase': che, 'cholesterol': chol,
+        'creatinina': crea, 'gamma_glutamyl_transferase': ggt, 'protein': prot
     }
 
     # 2. Create DataFrame for Model
     model_input_data = {
-        'Age': age, 
-        'Sex': sex, 
-        'ALB': alb, 
-        'ALP': alp, 
-        'ALT': alt, 
-        'AST': ast, 
-        'BIL': bil, 
-        'CHE': che, 
-        'CHOL': chol, 
-        'CREA': crea, 
-        'GGT': ggt, 
-        'PROT': prot
+        'Age': age, 'Sex': sex, 'ALB': alb, 'ALP': alp, 'ALT': alt, 'AST': ast,
+        'BIL': bil, 'CHE': che, 'CHOL': chol, 'CREA': crea, 'GGT': ggt, 'PROT': prot
     }
     
-    # Ensure DataFrame columns are in the correct order
     cols_order = ['Age', 'Sex', 'ALB', 'ALP', 'ALT', 'AST', 'BIL', 'CHE', 'CHOL', 'CREA', 'GGT', 'PROT']
     input_df = pd.DataFrame([model_input_data], columns=cols_order)
 
     # 3. Scale the Input
     if scaler:
-        # We use .values to avoid "Feature Name Mismatch" errors
+        # Use .values to avoid feature name mismatch warning
         final_input = scaler.transform(input_df.values)
     else:
         final_input = input_df 
 
     try:
-        # Prediction
-        # Flattening ensures we get a single scalar, not an array
+        # Prediction Logic (With safety flattens)
         raw_pred = model.predict(final_input)
         pred_idx = int(raw_pred.flatten()[0])
         result_text = CLASS_MAP.get(pred_idx, "Unknown Condition")
         
-        # Probabilities
-        # .flatten() converts the [[0.1, 0.2...]] array into [0.1, 0.2...]
-        probs = model.predict_proba(final_input).flatten()
+        raw_probs = model.predict_proba(final_input)
+        probs = raw_probs.flatten()
         proba_dict = {CLASS_MAP[i]: float(p) for i, p in enumerate(probs)}
         
         # --- RESULTS DISPLAY ---
@@ -199,9 +173,8 @@ if analyze:
             else:
                 st.error(f"### Primary Diagnosis: {result_text}")
         with col_conf:
-            # FIX: Explicitly convert to float to prevent tuple error
-            raw_conf_val = proba_dict.get(result_text, 0)
-            conf_val = float(raw_conf_val)
+            # Safe float conversion for metric
+            conf_val = float(proba_dict.get(result_text, 0))
             st.metric("Confidence", f"{conf_val*100:.1f}%")
 
         # TABS
@@ -220,8 +193,15 @@ if analyze:
                 st.success("• All biomarkers within reference range.")
 
         with t3:
-            st.write("Data sent to model (Processed):")
-            st.write(final_input)
+            st.write("### Internal Model Data")
+            st.info("This is exactly what the model sees (Scaled & Processed).")
+            
+            # --- FIX: Create a Readable DataFrame with Columns ---
+            # We convert the scaled numpy array back to a DataFrame for display
+            debug_df = pd.DataFrame(final_input, columns=cols_order)
+            
+            # Display with 2 decimal places so it's readable
+            st.dataframe(debug_df.style.format("{:.2f}"))
 
     except Exception as e:
         st.error(f"Error: {e}")
