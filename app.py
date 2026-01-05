@@ -7,12 +7,13 @@ import os
 
 # 1. PAGE CONFIGURATION
 st.set_page_config(
-    page_title="Liver Diagnostic AI | Final Robust Edition",
+    page_title="Liver Diagnostic AI | Final Accurate Edition",
     page_icon="🩺",
     layout="wide"
 )
 
-# 2. CONSTANTS (From your Notebook)
+# 2. CONSTANTS (Aligned with your Notebook)
+# This order MUST match exactly how you trained the model in your ipynb
 FEATURE_ORDER = ['Age', 'Sex', 'ALB', 'ALP', 'ALT', 'AST', 'BIL', 'CHE', 'CHOL', 'CREA', 'GGT', 'PROT']
 
 # Medical Reference Ranges (Standard µmol/L)
@@ -47,7 +48,7 @@ def plot_probabilities(proba_dict):
     # Sort by probability value
     sorted_probs = dict(sorted(proba_dict.items(), key=lambda item: item[1], reverse=True))
     
-    # Color logic: Green for 'No Disease', Red for everything else
+    # Logic: Green for 'No Disease', Red for everything else
     colors = ['#00cc96' if 'No Disease' in k else '#ff4b4b' for k in sorted_probs.keys()]
     
     fig = go.Figure(go.Bar(
@@ -111,6 +112,7 @@ if submit:
     }
     
     # 2. CLINICAL OVERRIDE (Healthy Check)
+    # This ensures "No Disease" is highest by default if all values are normal
     is_abnormal = False
     reasons = []
     for key, (low, high) in REF_RANGES.items():
@@ -120,9 +122,9 @@ if submit:
                 is_abnormal = True
                 reasons.append(f"{key} is {'High' if val > high else 'Low'} ({val})")
 
-    # 3. THE "BULLETPROOF" PREDICTION LOGIC
-    # These are the labels we know.
-    known_labels = ["No Disease (Blood Donor)", "Suspect Disease", "Hepatitis C", "Fibrosis", "Cirrhosis"]
+    # 3. DYNAMIC PREDICTION LOGIC (Fixes IndexError)
+    # The labels we expect to see
+    base_labels = ["No Disease (Blood Donor)", "Suspect Disease", "Hepatitis C", "Fibrosis", "Cirrhosis"]
     
     if not is_abnormal:
         # Default Healthy Case
@@ -136,29 +138,28 @@ if submit:
         }
         confidence = 98.5
     else:
-        # RUN MODEL
+        # Abnormal values found - Run Model
         df = pd.DataFrame([input_dict], columns=FEATURE_ORDER)
         
-        # 1. Get Prediction Index
+        # Determine winning index
         pred_idx = int(model.predict(df)[0])
         
-        # 2. Get Raw Probabilities
+        # Get Probabilities dynamically
         probs = model.predict_proba(df)[0]
+        num_classes = len(probs)
         
-        # 3. DYNAMIC MAPPING: This loop avoids IndexError by checking bounds
+        # Build probability dictionary without assuming list length
         proba_dict = {}
-        for i in range(len(probs)):
-            if i < len(known_labels):
-                label = known_labels[i]
-            else:
-                label = f"Unknown Stage {i}"
+        for i in range(num_classes):
+            # If we have a name for this index, use it. Otherwise, use a generic label.
+            label = base_labels[i] if i < len(base_labels) else f"Other Stage {i}"
             proba_dict[label] = float(probs[i])
             
-        # 4. Get Result Text Safely
-        if pred_idx < len(known_labels):
-            result_text = known_labels[pred_idx]
+        # Determine the winner text based on the prediction index
+        if pred_idx < len(base_labels):
+            result_text = base_labels[pred_idx]
         else:
-            result_text = f"Unknown Stage {pred_idx}"
+            result_text = f"Other Stage {pred_idx}"
             
         confidence = proba_dict.get(result_text, 0) * 100
 
