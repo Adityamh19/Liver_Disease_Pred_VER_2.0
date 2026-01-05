@@ -12,15 +12,14 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- HELPER: Medical Reference Ranges ---
-# UPDATED: Bilirubin range changed to match µmol/L (International Units)
+# --- HELPER: Medical Reference Ranges (Standardized to µmol/L for Model) ---
 REF_RANGES = {
     'age': (0.0, 120.0),
     'albumin': (35, 55),
     'alkaline_phosphatase': (40, 150),
     'alanine_aminotransferase': (7, 56),
     'aspartate_aminotransferase': (10, 40),
-    'bilirubin': (5.0, 21.0), # CHANGED: Correct range for µmol/L (approx 0.3 - 1.2 mg/dL)
+    'bilirubin': (5.0, 21.0), # Normal range in µmol/L
     'cholinesterase': (4, 12),
     'cholesterol': (2.5, 7.8),
     'creatinina': (50, 110),
@@ -38,7 +37,7 @@ CLASS_MAP = {
 }
 
 def get_abnormalities(inputs):
-    """Identifies which markers are out of range."""
+    """Identifies which markers are out of range based on the MODEL values."""
     issues = []
     for feature, value in inputs.items():
         if feature == 'sex': continue
@@ -47,9 +46,9 @@ def get_abnormalities(inputs):
         
         val = float(value)
         if val < low:
-            issues.append(f"Low {display_name} ({val})")
+            issues.append(f"Low {display_name} ({val:.2f})")
         elif val > high:
-            issues.append(f"Elevated {display_name} ({val})")
+            issues.append(f"Elevated {display_name} ({val:.2f})")
     return issues
 
 def plot_probabilities(proba_dict):
@@ -70,7 +69,6 @@ def plot_probabilities(proba_dict):
 @st.cache_resource
 def load_resources():
     model = None
-    # We are skipping the scaler intentionally now as the model prefers raw units
     try:
         with open('rf_liver.pkl', 'rb') as f:
             model = pickle.load(f)
@@ -82,6 +80,12 @@ def load_resources():
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/3050/3050479.png", width=80)
     st.title("Liver AI Diagnostic")
+    
+    st.markdown("### ⚙️ Settings")
+    # *** CRITICAL FIX: Unit Selection ***
+    # This allows you to enter 0.8 (US) and the model receives 13.6 (Intl)
+    unit_mode = st.radio("Bilirubin Units:", ["mg/dL (USA Standard)", "µmol/L (International)"])
+    
     st.info("System Ready.")
     st.markdown("---")
     st.markdown("**Detectable Conditions:**")
@@ -94,7 +98,6 @@ st.markdown("### Clinical Interface")
 
 # Load model
 resources = load_resources()
-# Error handling in case model load fails
 if isinstance(resources, tuple) and resources[0] is None:
     st.error(f"🚨 System Error: {resources[1]}")
     st.stop()
@@ -106,7 +109,7 @@ with st.form("main_form"):
     c1, c2, c3 = st.columns(3)
     with c1:
         st.subheader("1. Demographics")
-        age = st.number_input("Age (Years)", min_value=0.0, max_value=120.0, value=32.0, step=1.0)
+        age = st.number_input("Age (Years)", min_value=0.0, max_value=120.0, value=30.0, step=1.0)
         sex = st.selectbox("Sex", [1, 0], format_func=lambda x: "Male" if x==1 else "Female")
     with c2:
         st.subheader("2. Enzymes")
@@ -119,10 +122,17 @@ with st.form("main_form"):
         alb = st.number_input("ALB (Albumin)", value=45.0)
         prot = st.number_input("PROT (Total Protein)", value=72.0)
         
-        # *** CHANGED ***
-        # Default changed from 0.8 to 12.0 to match the model's expected unit (µmol/L)
-        bil = st.number_input("BIL (Bilirubin)", value=12.0) 
-        
+        # *** SMART BILIRUBIN INPUT ***
+        if "mg/dL" in unit_mode:
+            # User enters US units (Default 0.8)
+            bil_input = st.number_input("BIL (Bilirubin) [mg/dL]", value=0.8, step=0.1)
+            # We convert it to µmol/L for the model (x 17.1)
+            bil_final = bil_input * 17.1
+        else:
+            # User enters International units (Default 14.0)
+            bil_input = st.number_input("BIL (Bilirubin) [µmol/L]", value=14.0, step=1.0)
+            bil_final = bil_input
+
         che = st.number_input("CHE (Cholinesterase)", value=9.0)
         chol = st.number_input("CHOL (Cholesterol)", value=5.2)
         crea = st.number_input("CREA (Creatinine)", value=75.0)
@@ -130,29 +140,31 @@ with st.form("main_form"):
     analyze = st.form_submit_button("🔍 Run Advanced Analysis", use_container_width=True)
 
 if analyze:
-    # 1. Prepare Data Dictionary (Used for Clinical Factors)
-    raw_input = {
+    # 1. Prepare Data Dictionary (Using the FINAL converted values)
+    model_input_data = {
+        'Age': age, 'Sex': sex, 'ALB': alb, 'ALP': alp, 'ALT': alt, 'AST': ast,
+        'BIL': bil_final, # This is now guaranteed to be in µmol/L
+        'CHE': che, 'CHOL': chol, 'CREA': crea, 'GGT': ggt, 'PROT': prot
+    }
+    
+    # Helper dict for mapping names to values for the 'Abnormalities' function
+    raw_input_for_display = {
         'age': age, 'sex': sex, 'albumin': alb, 'alkaline_phosphatase': alp,
         'alanine_aminotransferase': alt, 'aspartate_aminotransferase': ast,
-        'bilirubin': bil, 'cholinesterase': che, 'cholesterol': chol,
+        'bilirubin': bil_final, 
+        'cholinesterase': che, 'cholesterol': chol,
         'creatinina': crea, 'gamma_glutamyl_transferase': ggt, 'protein': prot
     }
 
-    # 2. Prepare DataFrame for Model
-    model_input_data = {
-        'Age': age, 'Sex': sex, 'ALB': alb, 'ALP': alp, 'ALT': alt, 'AST': ast,
-        'BIL': bil, 'CHE': che, 'CHOL': chol, 'CREA': crea, 'GGT': ggt, 'PROT': prot
-    }
-    
+    # 2. Prepare DataFrame
     cols_order = ['Age', 'Sex', 'ALB', 'ALP', 'ALT', 'AST', 'BIL', 'CHE', 'CHOL', 'CREA', 'GGT', 'PROT']
     input_df = pd.DataFrame([model_input_data], columns=cols_order)
 
-    # 3. DIRECT INPUT (Bypassing Scaler)
-    final_input = input_df 
-
     try:
         # Prediction
+        final_input = input_df # Direct input, no scaler
         raw_pred = model.predict(final_input)
+        
         if hasattr(raw_pred, 'item'):
             pred_idx = int(raw_pred.item())
         else:
@@ -185,7 +197,8 @@ if analyze:
             
         with t2:
             st.write("#### Deviations from Normal Range:")
-            abnormalities = get_abnormalities(raw_input)
+            # We check the CONVERTED values against the international reference range
+            abnormalities = get_abnormalities(raw_input_for_display)
             if abnormalities:
                 for issue in abnormalities:
                     st.warning(f"• {issue}")
@@ -194,8 +207,8 @@ if analyze:
 
         with t3:
             st.write("### Data Sent to Model")
-            st.info("Values shown are exactly what you entered (with column names).")
-            # Display readable dataframe with column names
+            st.info(f"Bilirubin Mode: {unit_mode}")
+            st.info(f"User Input: {bil_input} | Model Received: {bil_final:.2f} µmol/L")
             st.dataframe(input_df.style.format("{:.2f}"))
 
     except Exception as e:
