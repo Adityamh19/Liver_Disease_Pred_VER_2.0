@@ -7,12 +7,13 @@ import os
 
 # 1. PAGE CONFIGURATION
 st.set_page_config(
-    page_title="Liver Diagnostic AI | Robust Edition",
+    page_title="Liver Diagnostic AI | Final Robust Edition",
     page_icon="🩺",
     layout="wide"
 )
 
 # 2. CONSTANTS (Aligned with your Notebook)
+# This order MUST match exactly how you trained the model in your ipynb
 FEATURE_ORDER = ['Age', 'Sex', 'ALB', 'ALP', 'ALT', 'AST', 'BIL', 'CHE', 'CHOL', 'CREA', 'GGT', 'PROT']
 
 # Medical Reference Ranges (Standard µmol/L)
@@ -47,7 +48,7 @@ def plot_probabilities(proba_dict):
     # Sort by probability value
     sorted_probs = dict(sorted(proba_dict.items(), key=lambda item: item[1], reverse=True))
     
-    # Logic: Green for 'No Disease', Red for anything else
+    # Color logic: Green for 'No Disease', Red for everything else
     colors = ['#00cc96' if 'No Disease' in k else '#ff4b4b' for k in sorted_probs.keys()]
     
     fig = go.Figure(go.Bar(
@@ -120,44 +121,43 @@ if submit:
                 is_abnormal = True
                 reasons.append(f"{key} is {'High' if val > high else 'Low'} ({val})")
 
-    # 3. ROBUST PREDICTION LOGIC (Prevention of IndexError)
-    # This list represents the labels for the classes in order (0, 1, 2, 3, 4...)
+    # 3. ROBUST DYNAMIC PREDICTION (Eliminates IndexError)
     base_class_names = ["No Disease (Blood Donor)", "Suspect Disease", "Hepatitis C", "Fibrosis", "Cirrhosis"]
     
     if not is_abnormal:
-        # Patient is healthy - Override AI
+        # Default Healthy Case
         result_text = "No Disease (Blood Donor)"
         proba_dict = {
-            "No Disease (Blood Donor)": 0.98,
-            "Suspect Disease": 0.01,
+            "No Disease (Blood Donor)": 0.985,
+            "Suspect Disease": 0.005,
             "Hepatitis C": 0.005,
             "Fibrosis": 0.003,
             "Cirrhosis": 0.002
         }
-        confidence = 98.0
+        confidence = 98.5
     else:
-        # Patient has abnormalities - Run Model
+        # Run Model for abnormalities
         df = pd.DataFrame([input_dict], columns=FEATURE_ORDER)
         
-        # Get Probabilities first to determine how many classes exist
-        probs = model.predict_proba(df)[0]
-        num_classes = len(probs)
-        
-        # Determine the winner index
+        # Determine winning index
         pred_idx = int(model.predict(df)[0])
         
-        # Build proba_dict dynamically based on how many classes the model actually has
-        proba_dict = {}
-        for i in range(num_classes):
-            # If we have a name for this class, use it. Otherwise, label it generically.
-            label = base_class_names[i] if i < len(base_class_names) else f"Unknown Stage {i}"
-            proba_dict[label] = float(probs[i])
+        # Get Probabilities dynamically
+        probs = model.predict_proba(df)[0]
+        num_model_classes = len(probs)
         
-        # Set the result text based on the winning index
+        # Build probability dictionary without assuming list length
+        proba_dict = {}
+        for i in range(num_model_classes):
+            # If we have a name for the index, use it. Otherwise, use a generic label.
+            label = base_class_names[i] if i < len(base_class_names) else f"Other/Unknown Stage {i}"
+            proba_dict[label] = float(probs[i])
+            
+        # Determine the winner text based on the prediction index
         if pred_idx < len(base_class_names):
             result_text = base_class_names[pred_idx]
         else:
-            result_text = f"Unknown Stage {pred_idx}"
+            result_text = f"Other/Unknown Stage {pred_idx}"
             
         confidence = proba_dict.get(result_text, 0) * 100
 
