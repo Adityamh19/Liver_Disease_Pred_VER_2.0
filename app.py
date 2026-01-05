@@ -13,13 +13,14 @@ st.set_page_config(
 )
 
 # --- HELPER: Medical Reference Ranges ---
+# UPDATED: Bilirubin range changed to match µmol/L (International Units)
 REF_RANGES = {
     'age': (0.0, 120.0),
     'albumin': (35, 55),
     'alkaline_phosphatase': (40, 150),
     'alanine_aminotransferase': (7, 56),
     'aspartate_aminotransferase': (10, 40),
-    'bilirubin': (1.7, 20.5),
+    'bilirubin': (5.0, 21.0), # CHANGED: Correct range for µmol/L (approx 0.3 - 1.2 mg/dL)
     'cholinesterase': (4, 12),
     'cholesterol': (2.5, 7.8),
     'creatinina': (50, 110),
@@ -69,7 +70,7 @@ def plot_probabilities(proba_dict):
 @st.cache_resource
 def load_resources():
     model = None
-    # We are skipping the scaler intentionally now
+    # We are skipping the scaler intentionally now as the model prefers raw units
     try:
         with open('rf_liver.pkl', 'rb') as f:
             model = pickle.load(f)
@@ -117,7 +118,11 @@ with st.form("main_form"):
         st.subheader("3. Proteins")
         alb = st.number_input("ALB (Albumin)", value=45.0)
         prot = st.number_input("PROT (Total Protein)", value=72.0)
-        bil = st.number_input("BIL (Bilirubin)", value=0.8) 
+        
+        # *** CHANGED ***
+        # Default changed from 0.8 to 12.0 to match the model's expected unit (µmol/L)
+        bil = st.number_input("BIL (Bilirubin)", value=12.0) 
+        
         che = st.number_input("CHE (Cholinesterase)", value=9.0)
         chol = st.number_input("CHOL (Cholesterol)", value=5.2)
         crea = st.number_input("CREA (Creatinine)", value=75.0)
@@ -143,11 +148,10 @@ if analyze:
     input_df = pd.DataFrame([model_input_data], columns=cols_order)
 
     # 3. DIRECT INPUT (Bypassing Scaler)
-    # Random Forest usually handles raw data better if the scaler is mismatched
     final_input = input_df 
 
     try:
-        # Prediction (Safety flattened)
+        # Prediction
         raw_pred = model.predict(final_input)
         if hasattr(raw_pred, 'item'):
             pred_idx = int(raw_pred.item())
@@ -156,7 +160,7 @@ if analyze:
             
         result_text = CLASS_MAP.get(pred_idx, "Unknown Condition")
         
-        # Probabilities (Safety flattened)
+        # Probabilities
         raw_probs = model.predict_proba(final_input)
         probs = raw_probs.flatten()
         proba_dict = {CLASS_MAP[i]: float(p) for i, p in enumerate(probs)}
