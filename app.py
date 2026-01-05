@@ -7,12 +7,12 @@ import os
 
 # 1. PAGE CONFIGURATION
 st.set_page_config(
-    page_title="Liver Diagnostic AI | Final Edition",
+    page_title="Liver Diagnostic AI | Robust Edition",
     page_icon="🩺",
     layout="wide"
 )
 
-# 2. CONSTANTS (Derived from your Notebook)
+# 2. CONSTANTS (Aligned with your Notebook)
 FEATURE_ORDER = ['Age', 'Sex', 'ALB', 'ALP', 'ALT', 'AST', 'BIL', 'CHE', 'CHOL', 'CREA', 'GGT', 'PROT']
 
 # Medical Reference Ranges (Standard µmol/L)
@@ -44,14 +44,24 @@ def load_liver_model():
 
 # 4. UI COMPONENTS
 def plot_probabilities(proba_dict):
+    # Sort by probability value
     sorted_probs = dict(sorted(proba_dict.items(), key=lambda item: item[1], reverse=True))
+    
+    # Logic: Green for 'No Disease', Red for anything else
+    colors = ['#00cc96' if 'No Disease' in k else '#ff4b4b' for k in sorted_probs.keys()]
+    
     fig = go.Figure(go.Bar(
         x=list(sorted_probs.values()),
         y=list(sorted_probs.keys()),
         orientation='h',
-        marker_color=['#00cc96' if 'No Disease' in k else '#ff4b4b' for k in sorted_probs.keys()]
+        marker_color=colors
     ))
-    fig.update_layout(title="AI Confidence Distribution", xaxis_title="Probability", height=300, margin=dict(l=0,r=0,t=40,b=0))
+    fig.update_layout(
+        title="AI Confidence Distribution", 
+        xaxis_title="Probability", 
+        height=350, 
+        margin=dict(l=0,r=0,t=40,b=0)
+    )
     return fig
 
 # --- MAIN INTERFACE ---
@@ -100,7 +110,7 @@ if submit:
         'GGT': ggt, 'PROT': prot
     }
     
-    # 2. CLINICAL OVERRIDE
+    # 2. CLINICAL OVERRIDE (Healthy Check)
     is_abnormal = False
     reasons = []
     for key, (low, high) in REF_RANGES.items():
@@ -110,11 +120,12 @@ if submit:
                 is_abnormal = True
                 reasons.append(f"{key} is {'High' if val > high else 'Low'} ({val})")
 
-    # 3. UPDATED PREDICTION LOGIC (FIXED INDEX ERROR)
-    class_names = ["No Disease (Blood Donor)", "Suspect Disease", "Hepatitis C", "Fibrosis", "Cirrhosis"]
+    # 3. ROBUST PREDICTION LOGIC (Prevention of IndexError)
+    # This list represents the labels for the classes in order (0, 1, 2, 3, 4...)
+    base_class_names = ["No Disease (Blood Donor)", "Suspect Disease", "Hepatitis C", "Fibrosis", "Cirrhosis"]
     
     if not is_abnormal:
-        # Patient is healthy - Override AI to avoid false positives
+        # Patient is healthy - Override AI
         result_text = "No Disease (Blood Donor)"
         proba_dict = {
             "No Disease (Blood Donor)": 0.98,
@@ -125,27 +136,29 @@ if submit:
         }
         confidence = 98.0
     else:
-        # Patient has abnormalities - Run Random Forest
+        # Patient has abnormalities - Run Model
         df = pd.DataFrame([input_dict], columns=FEATURE_ORDER)
-        pred = model.predict(df)[0]
         
-        # Safety check for index
-        if int(pred) < len(class_names):
-            result_text = class_names[int(pred)]
-        else:
-            result_text = f"Condition Group {int(pred)}"
-        
-        # Get Probabilities
+        # Get Probabilities first to determine how many classes exist
         probs = model.predict_proba(df)[0]
+        num_classes = len(probs)
         
-        # Build probability dictionary safely to avoid IndexErrors
+        # Determine the winner index
+        pred_idx = int(model.predict(df)[0])
+        
+        # Build proba_dict dynamically based on how many classes the model actually has
         proba_dict = {}
-        for i, p in enumerate(probs):
-            if i < len(class_names):
-                proba_dict[class_names[i]] = float(p)
-            else:
-                proba_dict[f"Other Class {i}"] = float(p)
-                
+        for i in range(num_classes):
+            # If we have a name for this class, use it. Otherwise, label it generically.
+            label = base_class_names[i] if i < len(base_class_names) else f"Unknown Stage {i}"
+            proba_dict[label] = float(probs[i])
+        
+        # Set the result text based on the winning index
+        if pred_idx < len(base_class_names):
+            result_text = base_class_names[pred_idx]
+        else:
+            result_text = f"Unknown Stage {pred_idx}"
+            
         confidence = proba_dict.get(result_text, 0) * 100
 
     # 4. RESULTS DISPLAY
@@ -166,5 +179,6 @@ if submit:
         if not is_abnormal:
             st.success("✅ All biomarkers are within healthy reference ranges.")
         else:
+            st.write("#### Clinical Deviations Found:")
             for r in reasons:
                 st.warning(f"• {r}")
