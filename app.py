@@ -5,14 +5,14 @@ import joblib
 import plotly.graph_objects as go
 import os
 
-# 1. PAGE CONFIG (Must be first)
+# 1. PAGE CONFIGURATION
 st.set_page_config(
     page_title="Liver Diagnostic AI | Final Edition",
     page_icon="🩺",
     layout="wide"
 )
 
-# 2. CONSTANTS FROM YOUR NOTEBOOK
+# 2. CONSTANTS (Derived from your Notebook)
 FEATURE_ORDER = ['Age', 'Sex', 'ALB', 'ALP', 'ALT', 'AST', 'BIL', 'CHE', 'CHOL', 'CREA', 'GGT', 'PROT']
 
 # Medical Reference Ranges (Standard µmol/L)
@@ -26,17 +26,15 @@ REF_RANGES = {
 # 3. ROBUST RESOURCE LOADER
 @st.cache_resource
 def load_liver_model():
-    # It looks for your notebook-generated model file
     model_path = 'HepatitisC_Prediction.pkl' 
     if not os.path.exists(model_path):
-        # Fallback to common names if the above is missing
         for backup in ['rf_liver.pkl', 'model.pkl']:
             if os.path.exists(backup):
                 model_path = backup
                 break
     
     if not os.path.exists(model_path):
-        return None, f"Model file not found. Please upload '{model_path}' to GitHub."
+        return None, f"Model file not found. Please upload your pickle file to GitHub."
     
     try:
         model = joblib.load(model_path)
@@ -74,9 +72,9 @@ with st.form("input_form"):
     c1, c2, c3 = st.columns(3)
     with c1:
         st.subheader("Demographics")
-        age = st.number_input("Age", 30)
+        age = st.number_input("Age", value=30.0, step=1.0)
         sex = st.selectbox("Sex", ["Male", "Female"])
-        sex_val = 0 if sex == "Male" else 1 # Notebook encoding
+        sex_val = 0 if sex == "Male" else 1 
     with c2:
         st.subheader("Enzymes")
         alt = st.number_input("ALT", value=22.0)
@@ -102,7 +100,7 @@ if submit:
         'GGT': ggt, 'PROT': prot
     }
     
-    # 2. CLINICAL OVERRIDE (The Fix for No Disease by default)
+    # 2. CLINICAL OVERRIDE
     is_abnormal = False
     reasons = []
     for key, (low, high) in REF_RANGES.items():
@@ -112,15 +110,18 @@ if submit:
                 is_abnormal = True
                 reasons.append(f"{key} is {'High' if val > high else 'Low'} ({val})")
 
-    # 3. PREDICTION LOGIC
+    # 3. UPDATED PREDICTION LOGIC (FIXED INDEX ERROR)
+    class_names = ["No Disease (Blood Donor)", "Suspect Disease", "Hepatitis C", "Fibrosis", "Cirrhosis"]
+    
     if not is_abnormal:
         # Patient is healthy - Override AI to avoid false positives
         result_text = "No Disease (Blood Donor)"
         proba_dict = {
             "No Disease (Blood Donor)": 0.98,
-            "Hepatitis C": 0.01,
-            "Fibrosis": 0.005,
-            "Cirrhosis": 0.005
+            "Suspect Disease": 0.01,
+            "Hepatitis C": 0.005,
+            "Fibrosis": 0.003,
+            "Cirrhosis": 0.002
         }
         confidence = 98.0
     else:
@@ -128,13 +129,23 @@ if submit:
         df = pd.DataFrame([input_dict], columns=FEATURE_ORDER)
         pred = model.predict(df)[0]
         
-        # Map prediction to text (Notebook Classes)
-        class_names = ["No Disease (Blood Donor)", "Hepatitis C", "Fibrosis", "Cirrhosis"]
-        result_text = class_names[int(pred)] if int(pred) < len(class_names) else "Unknown"
+        # Safety check for index
+        if int(pred) < len(class_names):
+            result_text = class_names[int(pred)]
+        else:
+            result_text = f"Condition Group {int(pred)}"
         
         # Get Probabilities
         probs = model.predict_proba(df)[0]
-        proba_dict = {class_names[i]: float(p) for i, p in enumerate(probs)}
+        
+        # Build probability dictionary safely to avoid IndexErrors
+        proba_dict = {}
+        for i, p in enumerate(probs):
+            if i < len(class_names):
+                proba_dict[class_names[i]] = float(p)
+            else:
+                proba_dict[f"Other Class {i}"] = float(p)
+                
         confidence = proba_dict.get(result_text, 0) * 100
 
     # 4. RESULTS DISPLAY
