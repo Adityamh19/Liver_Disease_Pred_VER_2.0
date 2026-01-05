@@ -88,13 +88,13 @@ def analyze_liver(input_dict, model):
         
         # DYNAMIC CLASS MAPPING (The specific fix for your IndexError)
         proba_dict = {}
-        for i, p in enumerate(raw_probs):
+        for i in range(len(raw_probs)):
             # If we have a name for this index, use it. If not, don't crash.
             if i < len(DEFAULT_CLASS_NAMES):
                 label = DEFAULT_CLASS_NAMES[i]
             else:
                 label = f"Advanced Stage {i}"
-            proba_dict[label] = float(p)
+            proba_dict[label] = float(raw_probs[i])
             
         # Identify the winner name safely
         if pred_idx < len(DEFAULT_CLASS_NAMES):
@@ -102,7 +102,7 @@ def analyze_liver(input_dict, model):
         else:
             winner_name = f"Advanced Stage {pred_idx}"
             
-        return winner_name, proba_dict[winner_name] * 100, proba_dict, abnormal_markers
+        return winner_name, proba_dict.get(winner_name, 0.0) * 100, proba_dict, abnormal_markers
 
 # --- 5. UI INTERFACE ---
 st.title("🩺 Advanced Liver Disease Analysis")
