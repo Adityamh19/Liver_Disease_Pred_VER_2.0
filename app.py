@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-import pickle  # Changed from joblib to pickle to match your notebook
+import pickle
 import numpy as np
 import plotly.graph_objects as go
 
@@ -13,7 +13,6 @@ st.set_page_config(
 )
 
 # --- HELPER: Medical Reference Ranges ---
-# Updated 'age' to allow decimals (0.0 to 120.0) for infants/newborns
 REF_RANGES = {
     'age': (0.0, 120.0),
     'albumin': (35, 55),        
@@ -28,7 +27,7 @@ REF_RANGES = {
     'protein': (60, 80)        
 }
 
-# --- CLASS MAPPING (For Random Forest 5-Class Output) ---
+# --- CLASS MAPPING ---
 CLASS_MAP = {
     0: 'No Disease (Blood Donor)',
     1: 'Suspect Disease',
@@ -42,7 +41,6 @@ def get_abnormalities(inputs):
     issues = []
     for feature, value in inputs.items():
         if feature == 'sex': continue
-        # cleanup feature name for display
         display_name = feature.replace('_', ' ').title()
         low, high = REF_RANGES.get(feature, (0, 9999))
         
@@ -79,7 +77,6 @@ def load_resources():
             with open('scaler.pkl', 'rb') as f:
                 scaler = pickle.load(f)
         except FileNotFoundError:
-            # If scaler is missing, we warn but don't crash
             st.warning("⚠️ 'scaler.pkl' not found. Ensure you saved it from your notebook!")
             
         return model, scaler
@@ -113,7 +110,6 @@ with st.form("main_form"):
     c1, c2, c3 = st.columns(3)
     with c1:
         st.subheader("1. Demographics")
-        # --- Fixed Age to allow decimals and newborns (0.0 - 120.0) ---
         age = st.number_input("Age (Years)", min_value=0.0, max_value=120.0, value=45.0, step=1.0)
         sex = st.selectbox("Sex", [1, 0], format_func=lambda x: "Male" if x==1 else "Female")
     with c2:
@@ -134,8 +130,7 @@ with st.form("main_form"):
     analyze = st.form_submit_button("🔍 Run Advanced Analysis", use_container_width=True)
 
 if analyze:
-    # 1. Prepare Data Dictionary (Using keys compatible with your display logic)
-    # Note: We will rename these to match the MODEL'S expected input right before prediction
+    # 1. Prepare Data Dictionary
     raw_input = {
         'age': age, 
         'sex': sex, 
@@ -152,8 +147,6 @@ if analyze:
     }
 
     # 2. Create DataFrame for Model
-    # IMPORTANT: The Random Forest was trained on specific column names.
-    # We map your form inputs to the likely column names from the notebook.
     model_input_data = {
         'Age': age, 
         'Sex': sex, 
@@ -169,13 +162,15 @@ if analyze:
         'PROT': prot
     }
     
-    # Ensure DataFrame columns are in the correct order for the Random Forest
+    # Ensure DataFrame columns are in the correct order
     cols_order = ['Age', 'Sex', 'ALB', 'ALP', 'ALT', 'AST', 'BIL', 'CHE', 'CHOL', 'CREA', 'GGT', 'PROT']
     input_df = pd.DataFrame([model_input_data], columns=cols_order)
 
-    # 3. Scale the Input (Required for Random Forest if trained on scaled data)
+    # 3. Scale the Input
     if scaler:
-        final_input = scaler.transform(input_df)
+        # --- FIXED CODE HERE ---
+        # We use .values to avoid "Feature Name Mismatch" errors
+        final_input = scaler.transform(input_df.values)
     else:
         final_input = input_df 
 
@@ -192,12 +187,11 @@ if analyze:
         st.divider()
         col_res, col_conf = st.columns([3, 1])
         with col_res:
-            if pred_idx == 0: # 0 is 'No Disease'
+            if pred_idx == 0: 
                 st.success(f"### Primary Diagnosis: {result_text}")
             else:
                 st.error(f"### Primary Diagnosis: {result_text}")
         with col_conf:
-            # Safely get confidence score
             conf_val = proba_dict.get(result_text, 0)
             st.metric("Confidence", f"{conf_val*100:.1f}%")
 
