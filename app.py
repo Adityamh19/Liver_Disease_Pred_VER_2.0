@@ -6,25 +6,25 @@ import plotly.graph_objects as go
 
 # 1. Page Configuration
 st.set_page_config(
-    page_title="Liver Diagnostic AI | Professional Edition",
-    page_icon="🩺",
-    layout="wide",
+    page_title="Liver Diagnostic AI | Professional Edition", 
+    page_icon="🩺", 
+    layout="wide", 
     initial_sidebar_state="expanded"
 )
 
 # --- HELPER: Medical Reference Ranges ---
 REF_RANGES = {
     'age': (0.0, 120.0),
-    'albumin': (35, 55),
-    'alkaline_phosphatase': (40, 150),
-    'alanine_aminotransferase': (7, 56),
-    'aspartate_aminotransferase': (10, 40),
-    'bilirubin': (1.7, 20.5),
-    'cholinesterase': (4, 12),
-    'cholesterol': (2.5, 7.8),
-    'creatinina': (50, 110),
-    'gamma_glutamyl_transferase': (9, 48),
-    'protein': (60, 80)
+    'albumin': (35, 55),        
+    'alkaline_phosphatase': (40, 150),      
+    'alanine_aminotransferase': (7, 56),        
+    'aspartate_aminotransferase': (10, 40),        
+    'bilirubin': (1.7, 20.5),    
+    'cholinesterase': (4, 12),        
+    'cholesterol': (2.5, 7.8),    
+    'creatinina': (50, 110),      
+    'gamma_glutamyl_transferase': (9, 48),        
+    'protein': (60, 80)        
 }
 
 # --- CLASS MAPPING ---
@@ -44,64 +44,27 @@ def get_abnormalities(inputs):
         display_name = feature.replace('_', ' ').title()
         low, high = REF_RANGES.get(feature, (0, 9999))
         
-        # Ensure value is a simple float for comparison
-        val_check = float(value)
-        
-        if val_check < low:
-            issues.append(f"Low {display_name} ({val_check})")
-        elif val_check > high:
-            issues.append(f"Elevated {display_name} ({val_check})")
+        # Ensure comparison is done on simple floats
+        val = float(value)
+        if val < low:
+            issues.append(f"Low {display_name} ({val})")
+        elif val > high:
+            issues.append(f"Elevated {display_name} ({val})")
     return issues
 
 def plot_probabilities(proba_dict):
-    """
-    Creates a bar chart with 'No Disease' fixed at the bottom.
-    Includes strict type enforcement to prevent tuple errors.
-    """
-    # 1. Separate 'No Disease' from the rest
-    no_disease_key = 'No Disease (Blood Donor)'
+    """Creates a professional bar chart of prediction probabilities."""
+    # Convert values to pure floats to avoid tuple errors in plotting
+    clean_dict = {k: float(v) for k, v in proba_dict.items()}
+    sorted_probs = dict(sorted(clean_dict.items(), key=lambda item: item[1], reverse=True))
     
-    # STRICT SAFETY: Ensure we extract a single float value
-    raw_val = proba_dict.get(no_disease_key, 0.0)
-    if isinstance(raw_val, (list, tuple, np.ndarray)):
-        no_disease_prob = float(raw_val[0])
-    else:
-        no_disease_prob = float(raw_val)
-    
-    # Get all other conditions
-    other_conditions = {}
-    for k, v in proba_dict.items():
-        if k != no_disease_key:
-            # STRICT SAFETY for loop values
-            if isinstance(v, (list, tuple, np.ndarray)):
-                other_conditions[k] = float(v[0])
-            else:
-                other_conditions[k] = float(v)
-    
-    # 2. Sort the other conditions (Ascending order puts the highest bar at the TOP)
-    sorted_others = sorted(other_conditions.items(), key=lambda item: item[1])
-    
-    # 3. Combine: Put No Disease first
-    keys = [no_disease_key] + [k for k, v in sorted_others]
-    vals = [no_disease_prob] + [v for k, v in sorted_others]
-    
-    # Create text labels safely by forcing float conversion again
-    text_labels = [f"{float(v)*100:.1f}%" for v in vals]
-
     fig = go.Figure(go.Bar(
-        x=vals,
-        y=keys,
+        x=list(sorted_probs.values()),
+        y=list(sorted_probs.keys()),
         orientation='h',
-        text=text_labels,
-        textposition='auto',
-        marker_color=['#00cc96' if 'No Disease' in k else '#ff4b4b' for k in keys]
+        marker_color=['#00cc96' if 'No Disease' in k else '#ff4b4b' for k in sorted_probs.keys()]
     ))
-    fig.update_layout(
-        title="AI Confidence Distribution",
-        xaxis_title="Probability",
-        height=300,
-        margin=dict(l=0,r=0,t=30,b=0)
-    )
+    fig.update_layout(title="AI Confidence Distribution", xaxis_title="Probability", height=300, margin=dict(l=0,r=0,t=30,b=0))
     return fig
 
 # 2. Load Resources
@@ -110,13 +73,17 @@ def load_resources():
     model = None
     scaler = None
     try:
+        # Load the Random Forest model
         with open('rf_liver.pkl', 'rb') as f:
             model = pickle.load(f)
+            
+        # Try to load the scaler
         try:
             with open('scaler.pkl', 'rb') as f:
                 scaler = pickle.load(f)
         except FileNotFoundError:
-            pass # Handle warning in main app
+            st.warning("⚠️ 'scaler.pkl' not found. Ensure you saved it from your notebook!")
+            
         return model, scaler
     except Exception as e:
         return None, str(e)
@@ -125,7 +92,7 @@ def load_resources():
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/3050/3050479.png", width=80)
     st.title("Liver AI Diagnostic")
-    st.info("System Ready.")
+    st.info("System Ready. Using Random Forest Architecture.")
     st.markdown("---")
     st.markdown("**Detectable Conditions:**")
     for v in CLASS_MAP.values():
@@ -142,8 +109,6 @@ if resources[0] is None:
     st.stop()
 
 model, scaler = resources
-if scaler is None:
-    st.warning("⚠️ Scaler file not found. Predictions may be inaccurate.")
 
 # INPUT FORM
 with st.form("main_form"):
@@ -172,58 +137,71 @@ with st.form("main_form"):
 if analyze:
     # 1. Prepare Data Dictionary
     raw_input = {
-        'age': age, 'sex': sex, 'albumin': alb, 'alkaline_phosphatase': alp,
-        'alanine_aminotransferase': alt, 'aspartate_aminotransferase': ast,
-        'bilirubin': bil, 'cholinesterase': che, 'cholesterol': chol,
-        'creatinina': crea, 'gamma_glutamyl_transferase': ggt, 'protein': prot
+        'age': age, 
+        'sex': sex, 
+        'albumin': alb, 
+        'alkaline_phosphatase': alp, 
+        'alanine_aminotransferase': alt, 
+        'aspartate_aminotransferase': ast, 
+        'bilirubin': bil, 
+        'cholinesterase': che, 
+        'cholesterol': chol, 
+        'creatinina': crea, 
+        'gamma_glutamyl_transferase': ggt, 
+        'protein': prot
     }
 
     # 2. Create DataFrame for Model
     model_input_data = {
-        'Age': age, 'Sex': sex, 'ALB': alb, 'ALP': alp, 'ALT': alt, 'AST': ast,
-        'BIL': bil, 'CHE': che, 'CHOL': chol, 'CREA': crea, 'GGT': ggt, 'PROT': prot
+        'Age': age, 
+        'Sex': sex, 
+        'ALB': alb, 
+        'ALP': alp, 
+        'ALT': alt, 
+        'AST': ast, 
+        'BIL': bil, 
+        'CHE': che, 
+        'CHOL': chol, 
+        'CREA': crea, 
+        'GGT': ggt, 
+        'PROT': prot
     }
     
+    # Ensure DataFrame columns are in the correct order
     cols_order = ['Age', 'Sex', 'ALB', 'ALP', 'ALT', 'AST', 'BIL', 'CHE', 'CHOL', 'CREA', 'GGT', 'PROT']
     input_df = pd.DataFrame([model_input_data], columns=cols_order)
 
     # 3. Scale the Input
     if scaler:
+        # We use .values to avoid "Feature Name Mismatch" errors
         final_input = scaler.transform(input_df.values)
     else:
         final_input = input_df 
 
     try:
-        # --- FIX: STRICT FLATTENING ---
-        # Get raw prediction and flatten to 1D array immediately
+        # Prediction
+        # Flattening ensures we get a single scalar, not an array
         raw_pred = model.predict(final_input)
-        pred_idx = int(np.array(raw_pred).flatten()[0]) # Force to single integer
-        
+        pred_idx = int(raw_pred.flatten()[0])
         result_text = CLASS_MAP.get(pred_idx, "Unknown Condition")
         
-        # Get probabilities and flatten to 1D array immediately
-        raw_probs = model.predict_proba(final_input)
-        probs = np.array(raw_probs).flatten() # Force to flat list of floats
-        
-        # Map probabilities safely
+        # Probabilities
+        # .flatten() converts the [[0.1, 0.2...]] array into [0.1, 0.2...]
+        probs = model.predict_proba(final_input).flatten()
         proba_dict = {CLASS_MAP[i]: float(p) for i, p in enumerate(probs)}
         
         # --- RESULTS DISPLAY ---
         st.divider()
         col_res, col_conf = st.columns([3, 1])
-        
-        # Safe extraction of confidence
-        raw_conf = proba_dict.get(result_text, 0.0)
-        conf_val = float(raw_conf) # Strict cast to float
-        
         with col_res:
             if pred_idx == 0: 
                 st.success(f"### Primary Diagnosis: {result_text}")
             else:
                 st.error(f"### Primary Diagnosis: {result_text}")
         with col_conf:
-            # The line below is where the formatting error usually happens. 
-            # We now guarantee conf_val is a float.
+            # FIX: Explicitly convert to float to prevent tuple error
+            raw_conf_val = proba_dict.get(result_text, 0)
+            conf_val = float(raw_conf_val)
             st.metric("Confidence", f"{conf_val*100:.1f}%")
 
         # TABS
@@ -242,12 +220,8 @@ if analyze:
                 st.success("• All biomarkers within reference range.")
 
         with t3:
-            st.write("### Data Sent to Model")
-            st.info("Values shown are exactly what you entered (with column names).")
-            st.dataframe(input_df)
+            st.write("Data sent to model (Processed):")
+            st.write(final_input)
 
     except Exception as e:
-        st.error(f"Error during calculation: {e}")
-        # Print detailed error to helps debug if it persists
-        import traceback
-        st.text(traceback.format_exc())
+        st.error(f"Error: {e}")
